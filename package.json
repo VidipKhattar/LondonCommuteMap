@@ -1,0 +1,22 @@
+{
+  "name": "london-commute-map",
+  "version": "1.0.0",
+  "scripts": {
+    "build:network": "node scripts/build-network.mjs",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "type": "module",
+  "dependencies": {
+    "@turf/turf": "^7.3.5",
+    "leaflet": "^1.9.4"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.21",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  },
+  "private": true
+}

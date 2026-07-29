@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
+  <title>London Commute Map — where can I get to?</title>
+  <meta name="description" content="See everywhere in London you can reach by public transport within a given time." />
+  <meta name="color-scheme" content="light dark" />
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <header class="panel-head">
+        <h1>London Commute Map</h1>
+        <p class="sub">Everywhere you can reach by public transport</p>
+      </header>
+
+      <section class="field">
+        <label for="search">Start from</label>
+        <div class="search-wrap">
+          <input id="search" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="Postcode, station or address" />
+          <button id="clear" type="button" aria-label="Clear" hidden>&times;</button>
+          <ul id="suggestions" role="listbox" hidden></ul>
+        </div>
+        <p class="hint" id="origin-note">Try <button class="link" data-example="SW1A 1AA">SW1A 1AA</button>,
+          <button class="link" data-example="King's Cross St. Pancras">King's Cross</button> —
+          or click the map.</p>
+      </section>
+
+      <section class="field">
+        <div class="row">
+          <label for="time">Travel time</label>
+          <output id="time-out">45 min</output>
+        </div>
+        <input id="time" type="range" min="5" max="120" step="5" value="45" />
+        <div class="ticks"><span>5</span><span>45</span><span>90</span><span>120</span></div>
+      </section>
+
+      <section class="field">
+        <label>Modes</label>
+        <div id="modes" class="chips"></div>
+      </section>
+
+      <details class="advanced">
+        <summary>Fine tuning</summary>
+        <div class="field">
+          <div class="row"><label for="service">Service level</label><output id="service-out">Peak</output></div>
+          <input id="service" type="range" min="1" max="3" step="1" value="1" />
+        </div>
+        <div class="field">
+          <div class="row"><label for="walk">Walking speed</label><output id="walk-out">4.8 km/h</output></div>
+          <input id="walk" type="range" min="3.5" max="6.5" step="0.1" value="4.8" />
+        </div>
+        <div class="field">
+          <div class="row"><label for="access">Max walk to first stop</label><output id="access-out">15 min</output></div>
+          <input id="access" type="range" min="2" max="30" step="1" value="15" />
+        </div>
+        <div class="field">
+          <div class="row"><label for="egress">Max walk at the far end</label><output id="egress-out">12 min</output></div>
+          <input id="egress" type="range" min="2" max="30" step="1" value="12" />
+        </div>
+        <div class="field">
+          <div class="row"><label for="change">Penalty per change</label><output id="change-out">3 min</output></div>
+          <input id="change" type="range" min="0" max="10" step="1" value="3" />
+        </div>
+        <label class="check"><input id="show-stations" type="checkbox" checked /> Show reachable stations</label>
+      </details>
+
+      <section class="field">
+        <label>Journey time</label>
+        <div id="legend" class="legend"></div>
+      </section>
+
+      <section id="stats" class="stats"></section>
+
+      <section class="field">
+        <label for="station-list">Reachable stations <span id="station-count" class="muted"></span></label>
+        <ol id="station-list" class="station-list"></ol>
+      </section>
+
+      <footer class="panel-foot">
+        <p>Network data from the <strong>TfL Unified API</strong> — Powered by TfL Open Data.
+          Tube, DLR and tram times are timetabled; Overground, Elizabeth line and
+          National Rail hops are estimated from distance. Waits assume even headways,
+          so treat results as a good guide rather than a journey plan.</p>
+        <p id="built" class="muted"></p>
+      </footer>
+    </aside>
+
+    <main id="map-wrap">
+      <div id="map"></div>
+      <div id="toast" class="toast" hidden></div>
+      <button id="panel-toggle" type="button" aria-label="Toggle controls">Controls</button>
+    </main>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
