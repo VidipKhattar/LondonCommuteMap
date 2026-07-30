@@ -1,16 +1,16 @@
 # London Commute Map
 
-Enter a London postcode, station or address, pick a travel time, and see every
-part of the city you could reach in that time by public transport. Drag the time
-slider and the map redraws immediately; drag the pin (or click the map) to move
-the origin.
+Give it a London postcode, station or address — a workplace, say — and a commute
+length, and it shades every part of the city you could commute in from within
+that time by public transport. Drag the time slider and the map redraws
+immediately; drag the pin (or click the map) to move the destination.
 
-**Hover anywhere** and you get the actual journey to that spot, leg by leg — walk,
-wait, ride, change, walk — with each line's roundel in its own TfL colour, the
-minutes for every leg, and a door-to-door total. The legs always add up to the
-total exactly.
+**Hover anywhere** and you get the actual commute from that spot into your
+address, leg by leg — walk, wait, ride, change, walk — with each line's roundel in
+its own TfL colour, the minutes for every leg, and a door-to-door total. The legs
+always add up to the total exactly.
 
-![The 45-minute isochrone from Westminster](docs/screenshot.png)
+![Everywhere within a 45-minute commute of Westminster](docs/screenshot.png)
 
 ## Running it
 
@@ -46,19 +46,23 @@ inter-station times by differencing the cumulative arrivals in
 **2. Routing — `src/engine.ts`.** Dijkstra over `(station, arriving line)`
 states, so staying on a train is free while changing lines costs a penalty plus
 the wait for the next service (half the line's headway). Seeded by walking from
-the origin to every station in range. ~2 ms for the whole network. It also keeps
-a predecessor per state, which is what lets a hovered point replay its journey:
-pick the station that reaches the point soonest, walk the chain back to the
-origin, and group consecutive hops on one line into a single ride leg.
+your destination to every station in range. ~2 ms for the whole network. It also
+keeps a predecessor per state, which is what lets a hovered point replay its
+commute: pick the station that reaches the point soonest, walk the chain back,
+group consecutive hops on one line into a single ride leg, then flip the whole
+itinerary inbound.
+
+Routing outward from the destination and presenting the result inbound is sound
+because every edge and interchange in the graph is symmetric — the times are the
+same in both directions. What isn't symmetric is the two walking limits, so they
+are bound to the ends a commuter thinks in: one for the walk to their first stop,
+one for the walk at the destination.
 
 **3. Rasterise and contour — `src/worker.ts`.** Every reachable station stamps a
 walking disc onto a 250 m grid over London, keeping the minimum — the
 multi-source shortest walk. `turf.isobands` then contours that grid into
 banded polygons (~40 ms). Both stages run in a Web Worker, and the Dijkstra
 result is cached, so moving the time slider only re-rasterises.
-
-Because the graph is symmetric, the area shown is equally "places you can get to
-from here" and "places you could commute here from".
 
 ## Accuracy
 

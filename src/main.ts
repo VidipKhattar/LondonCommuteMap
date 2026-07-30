@@ -31,10 +31,10 @@ const el = {
   serviceOut: $('service-out'),
   walk: $<HTMLInputElement>('walk'),
   walkOut: $('walk-out'),
-  access: $<HTMLInputElement>('access'),
-  accessOut: $('access-out'),
-  egress: $<HTMLInputElement>('egress'),
-  egressOut: $('egress-out'),
+  walkHome: $<HTMLInputElement>('walk-home'),
+  walkHomeOut: $('walk-home-out'),
+  walkDest: $<HTMLInputElement>('walk-dest'),
+  walkDestOut: $('walk-dest-out'),
   change: $<HTMLInputElement>('change'),
   changeOut: $('change-out'),
   showStations: $<HTMLInputElement>('show-stations'),
@@ -51,7 +51,7 @@ const el = {
 
 // ----------------------------------------------------------------- state
 
-let origin = { lat: 51.5074, lon: -0.1278, label: 'Charing Cross' }; // central London
+let destination = { lat: 51.5074, lon: -0.1278, label: 'Charing Cross' }; // central London
 let stationRefs: StationRef[] = [];
 let ready = false;
 let requestId = 0;
@@ -61,7 +61,7 @@ let pending = false;
 // ------------------------------------------------------------------- map
 
 const map = L.map('map', {
-  center: [origin.lat, origin.lon],
+  center: [destination.lat, destination.lon],
   zoom: 11,
   zoomControl: true,
   minZoom: 8,
@@ -122,21 +122,21 @@ L.tileLayer(
 
 const stationLayer = L.layerGroup().addTo(map);
 
-const originMarker = L.marker([origin.lat, origin.lon], {
+const originMarker = L.marker([destination.lat, destination.lon], {
   draggable: true,
   icon: L.divIcon({ className: '', html: '<div class="origin-pin"></div>', iconSize: [20, 20], iconAnchor: [10, 10] }),
   zIndexOffset: 1000,
 }).addTo(map);
 
-originMarker.bindTooltip('Drag me, or click anywhere on the map', { className: 'stn', direction: 'top', offset: [0, -12] });
+originMarker.bindTooltip('Your destination — drag me, or click anywhere on the map', { className: 'stn', direction: 'top', offset: [0, -12] });
 
 originMarker.on('dragend', () => {
   const { lat, lng } = originMarker.getLatLng();
-  setOrigin(lat, lng, 'Pinned location');
+  setDestination(lat, lng, 'Pinned location');
 });
 
 map.on('click', (e: L.LeafletMouseEvent) => {
-  setOrigin(e.latlng.lat, e.latlng.lng, 'Pinned location');
+  setDestination(e.latlng.lat, e.latlng.lng, 'Pinned location');
 });
 
 function cssVar(name: string) {
@@ -190,8 +190,10 @@ function options(): RouteOptions {
   return {
     maxTime: +el.time.value,
     walkSpeed: +el.walk.value,
-    maxAccessWalk: +el.access.value,
-    maxEgressWalk: +el.egress.value,
+    // The router works outward from the chosen destination, so its access walk
+    // is the one at that end and its egress walk is the commuter's home end.
+    maxAccessWalk: +el.walkDest.value,
+    maxEgressWalk: +el.walkHome.value,
     transferPenalty: +el.change.value,
     serviceFactor: SERVICE_FACTORS[+el.service.value - 1],
     modes: MODES.filter((m) => ($(`mode-${m}`) as HTMLInputElement | null)?.checked),
@@ -203,7 +205,7 @@ function schedule() {
   if (inFlight) { pending = true; return; }
   inFlight = true;
   requestId++;
-  worker.postMessage({ type: 'compute', id: requestId, origin, opt: options() });
+  worker.postMessage({ type: 'compute', id: requestId, origin: destination, opt: options() });
 }
 
 el.modes.innerHTML = MODES.map((m) => `
@@ -216,13 +218,13 @@ const syncLabels = () => {
   el.timeOut.textContent = `${el.time.value} min`;
   el.serviceOut.textContent = SERVICE_LABELS[+el.service.value - 1];
   el.walkOut.textContent = `${(+el.walk.value).toFixed(1)} km/h`;
-  el.accessOut.textContent = `${el.access.value} min`;
-  el.egressOut.textContent = `${el.egress.value} min`;
+  el.walkHomeOut.textContent = `${el.walkHome.value} min`;
+  el.walkDestOut.textContent = `${el.walkDest.value} min`;
   el.changeOut.textContent = `${el.change.value} min`;
 };
 syncLabels();
 
-for (const input of [el.time, el.service, el.walk, el.access, el.egress, el.change]) {
+for (const input of [el.time, el.service, el.walk, el.walkHome, el.walkDest, el.change]) {
   input.addEventListener('input', () => { syncLabels(); schedule(); });
 }
 el.modes.addEventListener('change', schedule);
@@ -327,13 +329,13 @@ el.clear.addEventListener('click', () => {
 function choose(p: Place) {
   el.search.value = p.label;
   closeSuggestions();
-  setOrigin(p.lat, p.lon, p.label, true);
+  setDestination(p.lat, p.lon, p.label, true);
 }
 
-function setOrigin(lat: number, lon: number, label: string, recentre = false) {
-  origin = { lat, lon, label };
+function setDestination(lat: number, lon: number, label: string, recentre = false) {
+  destination = { lat, lon, label };
   originMarker.setLatLng([lat, lon]);
-  el.originNote.textContent = `From ${label} · ${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+  el.originNote.textContent = `To ${label} · ${lat.toFixed(4)}, ${lon.toFixed(4)}`;
   // Picking a new place frames its reachable area; dragging the pin or moving
   // the slider leaves the view alone, which would otherwise be jarring.
   if (recentre) fitPending = true;
@@ -356,7 +358,7 @@ function render(res: ComputeResult) {
     if (bounds.isValid()) {
       map.fitBounds(bounds, { padding: [30, 30], maxZoom: 13, animate: true });
     } else {
-      map.setView([origin.lat, origin.lon], 12, { animate: true });
+      map.setView([destination.lat, destination.lon], 12, { animate: true });
     }
   }
 
@@ -366,7 +368,7 @@ function render(res: ComputeResult) {
   drawStations(res.stations);
 
   el.stats.innerHTML = `
-    <div class="stat"><div class="v">${res.stats.areaKm2.toLocaleString()}</div><div class="k">km² reachable</div></div>
+    <div class="stat"><div class="v">${res.stats.areaKm2.toLocaleString()}</div><div class="k">km² in range</div></div>
     <div class="stat"><div class="v">${res.stats.stationCount}</div><div class="k">stations</div></div>`;
 
   el.stationCount.textContent = res.stations.length ? `(${res.stations.length})` : '';
@@ -496,11 +498,10 @@ function legRow(leg: Leg, minutes: number, compact: boolean): string {
       title = 'Change';
       sub = `at ${leg.from}`;
     } else {
+      // Legs run inbound, so a missing end is the hovered spot at the start and
+      // the chosen destination at the finish.
       title = 'Walk';
-      if (leg.to && leg.from) sub = `${leg.from} → ${leg.to}`;
-      else if (leg.to) sub = `to ${leg.to}`;
-      else if (leg.from) sub = `from ${leg.from}`;
-      else sub = 'the whole way';
+      sub = `${leg.from ?? 'here'} → ${leg.to ?? 'destination'}`;
     }
   } else if (leg.kind === 'wait') {
     title = `Wait for ${leg.lineName}`;
@@ -538,7 +539,7 @@ function drawHoverCard(res: ProbeResult) {
         <span class="ht-k">no route</span>
       </div>
       <div class="legs"><div class="leg-none">
-        No station within a ${el.egress.value} min walk of here.
+        No station within a ${el.walkHome.value} min walk of here.
       </div></div>`;
   } else {
     const total = Math.round(j.total);
@@ -577,4 +578,4 @@ function escapeHtml(s: string) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
 
-setOrigin(origin.lat, origin.lon, origin.label);
+setDestination(destination.lat, destination.lon, destination.label);

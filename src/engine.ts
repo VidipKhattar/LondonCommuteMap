@@ -193,11 +193,14 @@ export class Engine {
   }
 
   /**
-   * The actual journey to a point on the map: walk, wait, ride, ..., walk.
+   * The commute from a point on the map *into* the chosen address: walk, wait,
+   * ride, ..., walk.
    *
-   * Picks whichever station gets there soonest (or pure walking, if that wins),
-   * then walks the Dijkstra predecessor chain back to the origin and groups
-   * consecutive hops on one line into a single ride leg.
+   * The router itself works outward from the address, so this picks whichever
+   * station reaches the point soonest (or pure walking, if that wins), walks the
+   * predecessor chain back, groups consecutive hops on one line into a ride, and
+   * then flips the whole thing inbound. Times are unchanged by the flip because
+   * every edge and interchange in the graph is symmetric.
    */
   probe(ptLat: number, ptLon: number, res: RouteResult, opt: RouteOptions): Journey | null {
     const mPerMin = (opt.walkSpeed * 1000) / 60;
@@ -287,11 +290,12 @@ export class Engine {
       legs.push({ kind: 'walk', minutes: bestEgress, from: this.names[bestStation], to: null });
     }
 
-    return {
-      total: bestTotal,
-      reachable: bestTotal <= opt.maxTime,
-      legs: legs.filter((l) => l.kind !== 'walk' || l.minutes > 0.05),
-    };
+    // Drop walks too short to be worth a row, then take the total from what's
+    // left — otherwise a few dropped seconds leave the legs not summing to it.
+    const kept = legs.filter((l) => l.kind !== 'walk' || l.minutes > 0.05);
+    const total = kept.reduce((sum, l) => sum + l.minutes, 0);
+
+    return { total, reachable: total <= opt.maxTime, legs: inbound(kept) };
   }
 
   /**
@@ -341,6 +345,43 @@ export class Engine {
 
     return { values, rows, cols, latStep, lonStep };
   }
+}
+
+/**
+ * Turn an outbound itinerary (address -> point) into the inbound commute
+ * (point -> address).
+ *
+ * Reversing the order and swapping each leg's endpoints is most of it. Waits are
+ * the fiddly part: a wait belongs *before* the ride it's for, and you board at
+ * the other end of that ride once it's reversed — so each wait moves with its
+ * ride and re-anchors to the reversed boarding station.
+ */
+function inbound(legs: RawLeg[]): RawLeg[] {
+  const out: RawLeg[] = [];
+
+  for (let i = legs.length - 1; i >= 0; i--) {
+    const leg = legs[i];
+
+    if (leg.kind === 'walk') {
+      out.push({ ...leg, from: leg.to, to: leg.from });
+      continue;
+    }
+
+    if (leg.kind === 'ride') {
+      const flipped: RawLeg = { ...leg, from: leg.to, to: leg.from };
+      const before = legs[i - 1];
+      if (before?.kind === 'wait') {
+        out.push({ ...before, at: flipped.from });
+        i--; // consumed alongside its ride
+      }
+      out.push(flipped);
+      continue;
+    }
+
+    out.push(leg); // a wait with no ride after it shouldn't happen, but keep it
+  }
+
+  return out;
 }
 
 export function metres(aLat: number, aLon: number, bLat: number, bLon: number) {

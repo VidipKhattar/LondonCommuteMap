@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5" />
-  <title>London Commute Map — where can I get to?</title>
-  <meta name="description" content="See everywhere in London you can reach by public transport within a given time." />
+  <title>London Commute Map — where could I commute from?</title>
+  <meta name="description" content="See everywhere in London within a given public-transport commute of any address." />
   <meta name="color-scheme" content="light dark" />
 </head>
 <body>
@@ -12,11 +12,11 @@
     <aside id="panel">
       <header class="panel-head">
         <h1>London Commute Map</h1>
-        <p class="sub">Everywhere you can reach by public transport</p>
+        <p class="sub">Everywhere you could commute in from</p>
       </header>
 
       <section class="field">
-        <label for="search">Start from</label>
+        <label for="search">Commute to</label>
         <div class="search-wrap">
           <input id="search" type="text" autocomplete="off" spellcheck="false"
                  placeholder="Postcode, station or address" />
@@ -53,12 +53,12 @@
           <input id="walk" type="range" min="3.5" max="6.5" step="0.1" value="4.8" />
         </div>
         <div class="field">
-          <div class="row"><label for="access">Max walk to first stop</label><output id="access-out">15 min</output></div>
-          <input id="access" type="range" min="2" max="30" step="1" value="15" />
+          <div class="row"><label for="walk-home">Max walk to the first stop</label><output id="walk-home-out">15 min</output></div>
+          <input id="walk-home" type="range" min="2" max="30" step="1" value="15" />
         </div>
         <div class="field">
-          <div class="row"><label for="egress">Max walk at the far end</label><output id="egress-out">12 min</output></div>
-          <input id="egress" type="range" min="2" max="30" step="1" value="12" />
+          <div class="row"><label for="walk-dest">Max walk at your destination</label><output id="walk-dest-out">12 min</output></div>
+          <input id="walk-dest" type="range" min="2" max="30" step="1" value="12" />
         </div>
         <div class="field">
           <div class="row"><label for="change">Penalty per change</label><output id="change-out">3 min</output></div>
@@ -68,14 +68,14 @@
       </details>
 
       <section class="field">
-        <label>Journey time</label>
+        <label>Commute time</label>
         <div id="legend" class="legend"></div>
       </section>
 
       <section id="stats" class="stats"></section>
 
       <section class="field">
-        <label for="station-list">Reachable stations <span id="station-count" class="muted"></span></label>
+        <label for="station-list">Stations in range <span id="station-count" class="muted"></span></label>
         <ol id="station-list" class="station-list"></ol>
       </section>
 
