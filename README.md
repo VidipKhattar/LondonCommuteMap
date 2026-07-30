@@ -5,6 +5,11 @@ part of the city you could reach in that time by public transport. Drag the time
 slider and the map redraws immediately; drag the pin (or click the map) to move
 the origin.
 
+**Hover anywhere** and you get the actual journey to that spot, leg by leg — walk,
+wait, ride, change, walk — with each line's roundel in its own TfL colour, the
+minutes for every leg, and a door-to-door total. The legs always add up to the
+total exactly.
+
 ![The 45-minute isochrone from Westminster](docs/screenshot.png)
 
 ## Running it
@@ -41,7 +46,10 @@ inter-station times by differencing the cumulative arrivals in
 **2. Routing — `src/engine.ts`.** Dijkstra over `(station, arriving line)`
 states, so staying on a train is free while changing lines costs a penalty plus
 the wait for the next service (half the line's headway). Seeded by walking from
-the origin to every station in range. ~2 ms for the whole network.
+the origin to every station in range. ~2 ms for the whole network. It also keeps
+a predecessor per state, which is what lets a hovered point replay its journey:
+pick the station that reaches the point soonest, walk the chain back to the
+origin, and group consecutive hops on one line into a single ride leg.
 
 **3. Rasterise and contour — `src/worker.ts`.** Every reachable station stamps a
 walking disc onto a 250 m grid over London, keeping the minimum — the
