@@ -1,7 +1,8 @@
 import L from 'leaflet';
 import './style.css';
 import { suggest, prettyMode, type Place } from './geocode';
-import type { ComputeResult, RouteOptions, StationHit, StationRef } from './types';
+import { ensureContrast, isPale, legIcon } from './lines';
+import type { ComputeResult, Leg, ProbeResult, RouteOptions, StationHit, StationRef } from './types';
 
 const MODES = ['tube', 'elizabeth-line', 'overground', 'dlr', 'national-rail', 'tram'] as const;
 const SERVICE_LABELS = ['Peak', 'Off-peak', 'Evening'];
@@ -42,6 +43,7 @@ const el = {
   stationList: $<HTMLOListElement>('station-list'),
   stationCount: $('station-count'),
   toast: $('toast'),
+  hoverCard: $('hover-card'),
   built: $('built'),
   panel: $('panel'),
   panelToggle: $<HTMLButtonElement>('panel-toggle'),
@@ -169,6 +171,13 @@ worker.onmessage = (ev: MessageEvent) => {
     inFlight = false;
     if (msg.id === requestId) render(msg as ComputeResult);
     if (pending) { pending = false; schedule(); }
+    return;
+  }
+
+  if (msg.type === 'probe') {
+    probeInFlight = false;
+    if (msg.id === probeId) drawHoverCard(msg as ProbeResult);
+    if (probePending) { const p = probePending; probePending = null; requestProbe(p.lat, p.lon); }
   }
 };
 
@@ -412,6 +421,149 @@ function drawLegend(breaks: number[]) {
   el.legend.innerHTML =
     `<div class="legend-bar">${swatches}</div><div class="legend-labels">${labels}</div>` +
     `<div class="legend-labels"><span>minutes door to door</span></div>`;
+}
+
+// ---------------------------------------------------- hover: the exact journey
+
+let probeId = 0;
+let probeInFlight = false;
+let probePending: { lat: number; lon: number } | null = null;
+let cursor = { x: 0, y: 0 };
+let rafQueued = false;
+let hoverAt: L.LatLng | null = null;
+
+function requestProbe(lat: number, lon: number) {
+  if (!ready) return;
+  // Only one probe in flight; keep just the newest so fast moves don't queue up.
+  if (probeInFlight) { probePending = { lat, lon }; return; }
+  probeInFlight = true;
+  probeId++;
+  worker.postMessage({ type: 'probe', id: probeId, lat, lon });
+}
+
+map.on('mousemove', (e: L.LeafletMouseEvent) => {
+  cursor = { x: e.containerPoint.x, y: e.containerPoint.y };
+  hoverAt = e.latlng;
+  if (rafQueued) return;
+  rafQueued = true;
+  requestAnimationFrame(() => {
+    rafQueued = false;
+    if (hoverAt) requestProbe(hoverAt.lat, hoverAt.lng);
+  });
+});
+
+const hideHover = () => { el.hoverCard.hidden = true; hoverAt = null; };
+map.on('mouseout dragstart zoomstart', hideHover);
+originMarker.on('dragstart', hideHover);
+
+/**
+ * Round leg minutes so they still add up to the displayed total (largest
+ * remainder), then make sure nothing shows as a bare "0m".
+ */
+function apportion(values: number[], total: number): number[] {
+  const out = values.map((v) => Math.floor(v));
+  let rem = total - out.reduce((a, b) => a + b, 0);
+
+  const byFraction = values
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac);
+
+  for (let k = 0; rem > 0 && k < byFraction.length; k++, rem--) out[byFraction[k].i]++;
+  for (let k = byFraction.length - 1; rem < 0 && k >= 0; k--) {
+    if (out[byFraction[k].i] > 0) { out[byFraction[k].i]--; rem++; }
+  }
+
+  // Borrow a minute from the longest leg for anything that rounded away to zero.
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] > 0) continue;
+    const donor = out.indexOf(Math.max(...out));
+    if (out[donor] > 1) { out[donor]--; out[i] = 1; }
+  }
+  return out;
+}
+
+function legRow(leg: Leg, minutes: number, compact: boolean): string {
+  const colour = leg.kind === 'walk' ? '' : ensureContrast(leg.colour, isDark);
+  const icon = legIcon(leg.kind, leg.kind === 'walk' ? 'walk' : leg.mode, colour);
+  const pale = colour && isPale(colour) ? ' pale' : '';
+
+  let title: string;
+  let sub = '';
+  let aside = '';
+  if (leg.kind === 'walk') {
+    if (leg.from && leg.from === leg.to) {
+      // Two TfL records for one interchange, e.g. Bond Street tube <-> Elizabeth.
+      title = 'Change';
+      sub = `at ${leg.from}`;
+    } else {
+      title = 'Walk';
+      if (leg.to && leg.from) sub = `${leg.from} → ${leg.to}`;
+      else if (leg.to) sub = `to ${leg.to}`;
+      else if (leg.from) sub = `from ${leg.from}`;
+      else sub = 'the whole way';
+    }
+  } else if (leg.kind === 'wait') {
+    title = `Wait for ${leg.lineName}`;
+    if (!compact) sub = `at ${leg.at}`;
+  } else {
+    title = leg.lineName;
+    sub = `${leg.from} → ${leg.to}`;
+    // Stop count sits under the time so long station names get the full width.
+    aside = `${leg.stops} stop${leg.stops === 1 ? '' : 's'}`;
+  }
+
+  return `
+    <div class="leg">
+      <span class="leg-icon${pale}">${icon}</span>
+      <span class="leg-main">
+        <span class="leg-title">${escapeHtml(title)}</span>
+        ${sub ? `<span class="leg-sub">${escapeHtml(sub)}</span>` : ''}
+      </span>
+      <span class="leg-time">
+        <span class="lt-v">${minutes}m</span>
+        ${aside ? `<span class="lt-k">${aside}</span>` : ''}
+      </span>
+    </div>`;
+}
+
+function drawHoverCard(res: ProbeResult) {
+  if (!hoverAt) { hideHover(); return; }
+  const j = res.journey;
+
+  if (!j) {
+    // No station close enough to walk from, and too far to walk the whole way.
+    el.hoverCard.innerHTML = `
+      <div class="hover-total over">
+        <span class="ht-v">—</span>
+        <span class="ht-k">no route</span>
+      </div>
+      <div class="legs"><div class="leg-none">
+        No station within a ${el.egress.value} min walk of here.
+      </div></div>`;
+  } else {
+    const total = Math.round(j.total);
+    const shown = apportion(j.legs.map((l) => l.minutes), total);
+    // Long, many-change journeys would overflow a short viewport otherwise.
+    const compact = j.legs.length > 8;
+    el.hoverCard.innerHTML = `
+      <div class="hover-total ${j.reachable ? '' : 'over'}">
+        <span class="ht-v">${total}<span class="ht-u">min</span></span>
+        <span class="ht-k">${j.reachable ? 'door to door' : `beyond ${el.time.value} min`}</span>
+      </div>
+      <div class="legs${compact ? ' compact' : ''}">
+        ${j.legs.map((l, i) => legRow(l, shown[i], compact)).join('')}
+      </div>`;
+  }
+
+  el.hoverCard.hidden = false;
+
+  // Keep the card beside the cursor, flipping before it runs off the map.
+  const wrap = el.hoverCard.parentElement!.getBoundingClientRect();
+  const { offsetWidth: w, offsetHeight: h } = el.hoverCard;
+  const pad = 16;
+  const x = cursor.x + pad + w > wrap.width ? cursor.x - w - pad : cursor.x + pad;
+  const y = Math.max(pad, Math.min(cursor.y - h / 2, wrap.height - h - pad));
+  el.hoverCard.style.transform = `translate(${Math.max(pad, x)}px, ${y}px)`;
 }
 
 function toast(text: string, sticky = false) {
