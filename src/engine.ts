@@ -1,4 +1,4 @@
-import type { RawNetwork, RouteOptions } from './types';
+import type { Journey, RawLeg, RawNetwork, RouteOptions, RouteResult } from './types';
 
 // London-wide grid, padded so walk circles near the edge aren't clipped.
 export const GRID = {
@@ -19,6 +19,8 @@ export class Engine {
   readonly lon: Float64Array;
   readonly stationModes: string[][] = [];
   readonly generated: string;
+  /** Line ids in slot order, so a route's line index can be named and coloured. */
+  readonly lineIds: string[] = [];
 
   private out: Adj[][] = [];
   private transfers: { to: number; t: number }[][] = [];
@@ -52,6 +54,7 @@ export class Engine {
     const lineIdx = new Map<string, number>();
     for (const [id, meta] of Object.entries(net.lines)) {
       lineIdx.set(id, this.lineMode.length);
+      this.lineIds.push(id);
       this.lineMode.push(meta.mode);
       this.lineHeadway.push(meta.headway);
     }
@@ -108,7 +111,7 @@ export class Engine {
    * Dijkstra over (station, arriving line) states so that staying on a line is
    * free while changing costs a penalty plus the wait for the next service.
    */
-  route(originLat: number, originLon: number, opt: RouteOptions): Float32Array {
+  route(originLat: number, originLon: number, opt: RouteOptions): RouteResult {
     const nStations = this.names.length;
     const nLines = this.lineMode.length;
     const slots = nLines + 1;             // last slot = arrived on foot
@@ -124,6 +127,9 @@ export class Engine {
     }
 
     const dist = new Float32Array(nStations * slots).fill(UNREACHABLE);
+    // Predecessor state per state, so an itinerary can be walked back later.
+    // Stays -1 for the seed states, which is how reconstruction knows to stop.
+    const prev = new Int32Array(nStations * slots).fill(-1);
     const heap = new MinHeap();
 
     // Seed: walk from the origin to every station within reach.
@@ -151,7 +157,7 @@ export class Engine {
         const next = cost + board + e.t;
         if (next >= opt.maxTime) continue;
         const nk = e.to * slots + e.line;
-        if (next < dist[nk]) { dist[nk] = next; heap.push(next, nk); }
+        if (next < dist[nk]) { dist[nk] = next; prev[nk] = key; heap.push(next, nk); }
       }
 
       // Out-of-station interchange (Bank <-> Monument, Euston <-> Euston Square...).
@@ -160,22 +166,132 @@ export class Engine {
           const next = cost + tr.t * (4.8 / opt.walkSpeed);
           if (next >= opt.maxTime) continue;
           const nk = tr.to * slots + walkSlot;
-          if (next < dist[nk]) { dist[nk] = next; heap.push(next, nk); }
+          if (next < dist[nk]) { dist[nk] = next; prev[nk] = key; heap.push(next, nk); }
         }
       }
     }
 
-    // Collapse (station, line) states down to one arrival time per station.
-    const best = new Float32Array(nStations).fill(UNREACHABLE);
+    // Collapse (station, line) states down to one arrival time per station,
+    // remembering which state won so the itinerary starts from the right one.
+    const arrival = new Float32Array(nStations).fill(UNREACHABLE);
+    const bestState = new Int32Array(nStations).fill(-1);
     for (let s = 0; s < nStations; s++) {
-      let m = UNREACHABLE;
+      let m = UNREACHABLE, best = -1;
       for (let l = 0; l < slots; l++) {
         const v = dist[s * slots + l];
-        if (v < m) m = v;
+        if (v < m) { m = v; best = s * slots + l; }
       }
-      best[s] = m;
+      arrival[s] = m;
+      bestState[s] = best;
     }
-    return best;
+
+    return { arrival, dist, prev, bestState, slots, walkSlot, origin: { lat: originLat, lon: originLon } };
+  }
+
+  private edgeTime(a: number, b: number, line: number): number {
+    return this.out[a].find((e) => e.to === b && e.line === line)?.t ?? 0;
+  }
+
+  /**
+   * The actual journey to a point on the map: walk, wait, ride, ..., walk.
+   *
+   * Picks whichever station gets there soonest (or pure walking, if that wins),
+   * then walks the Dijkstra predecessor chain back to the origin and groups
+   * consecutive hops on one line into a single ride leg.
+   */
+  probe(ptLat: number, ptLon: number, res: RouteResult, opt: RouteOptions): Journey | null {
+    const mPerMin = (opt.walkSpeed * 1000) / 60;
+
+    // Walking the whole way is always an option, capped as in timeGrid.
+    const directWalk = metres(res.origin.lat, res.origin.lon, ptLat, ptLon) / mPerMin;
+    let bestTotal = directWalk <= Math.min(opt.maxTime, 45) ? directWalk : Infinity;
+    let bestStation = -1;
+    let bestEgress = 0;
+
+    for (const s of this.stationsNear(ptLat, ptLon, opt.maxEgressWalk * mPerMin)) {
+      if (res.arrival[s] >= UNREACHABLE) continue;
+      const egress = metres(ptLat, ptLon, this.lat[s], this.lon[s]) / mPerMin;
+      const total = res.arrival[s] + egress;
+      if (total < bestTotal) { bestTotal = total; bestStation = s; bestEgress = egress; }
+    }
+
+    if (!isFinite(bestTotal)) return null;
+
+    if (bestStation < 0) {
+      return { total: directWalk, reachable: directWalk <= opt.maxTime, legs: [
+        { kind: 'walk', minutes: directWalk, from: null, to: null },
+      ] };
+    }
+
+    // Walk the predecessor chain back, then flip it to origin -> destination.
+    const chain: { station: number; slot: number; cost: number }[] = [];
+    for (let key = res.bestState[bestStation]; key >= 0; key = res.prev[key]) {
+      chain.push({
+        station: (key / res.slots) | 0,
+        slot: key % res.slots,
+        cost: res.dist[key],
+      });
+    }
+    chain.reverse();
+
+    const legs: RawLeg[] = [];
+
+    // Access walk: the seed state's cost *is* the walk from the origin.
+    legs.push({ kind: 'walk', minutes: chain[0].cost, from: null, to: this.names[chain[0].station] });
+
+    let i = 1;
+    while (i < chain.length) {
+      const step = chain[i];
+
+      if (step.slot === res.walkSlot) {
+        legs.push({
+          kind: 'walk',
+          minutes: step.cost - chain[i - 1].cost,
+          from: this.names[chain[i - 1].station],
+          to: this.names[step.station],
+        });
+        i++;
+        continue;
+      }
+
+      // Group every consecutive hop on this same line into one ride.
+      const line = step.slot;
+      const boardIdx = i - 1;
+      let ride = 0;
+      while (i < chain.length && chain[i].slot === line) {
+        ride += this.edgeTime(chain[i - 1].station, chain[i].station, line);
+        i++;
+      }
+      const alightIdx = i - 1;
+      const spent = chain[alightIdx].cost - chain[boardIdx].cost;
+
+      // Whatever the leg cost beyond the ride itself is wait (plus any change penalty).
+      const waited = Math.max(0, spent - ride);
+      if (waited > 0.05) {
+        legs.push({
+          kind: 'wait', minutes: waited, line,
+          at: this.names[chain[boardIdx].station],
+        });
+      }
+      legs.push({
+        kind: 'ride',
+        minutes: spent - waited,
+        line,
+        from: this.names[chain[boardIdx].station],
+        to: this.names[chain[alightIdx].station],
+        stops: alightIdx - boardIdx,
+      });
+    }
+
+    if (bestEgress > 0.05) {
+      legs.push({ kind: 'walk', minutes: bestEgress, from: this.names[bestStation], to: null });
+    }
+
+    return {
+      total: bestTotal,
+      reachable: bestTotal <= opt.maxTime,
+      legs: legs.filter((l) => l.kind !== 'walk' || l.minutes > 0.05),
+    };
   }
 
   /**

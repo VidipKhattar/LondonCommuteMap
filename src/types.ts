@@ -47,3 +47,46 @@ export interface StationRef {
   lon: number;
   modes: string[];
 }
+
+/** Everything the router produces, including what's needed to replay a journey. */
+export interface RouteResult {
+  /** Earliest arrival in minutes, per station. */
+  arrival: Float32Array;
+  /** Cost per (station, line) state. */
+  dist: Float32Array;
+  /** Predecessor state per state; -1 at a seed. */
+  prev: Int32Array;
+  /** The winning state per station. */
+  bestState: Int32Array;
+  slots: number;
+  walkSlot: number;
+  origin: { lat: number; lon: number };
+}
+
+/** A journey leg as the engine emits it, with lines still as slot indices. */
+export type RawLeg =
+  | { kind: 'walk'; minutes: number; from: string | null; to: string | null }
+  | { kind: 'wait'; minutes: number; line: number; at: string }
+  | { kind: 'ride'; minutes: number; line: number; from: string; to: string; stops: number };
+
+export interface Journey {
+  total: number;
+  reachable: boolean;
+  legs: RawLeg[];
+}
+
+/** A leg ready to render: line slots resolved to names, modes and colours. */
+export type Leg =
+  | { kind: 'walk'; minutes: number; from: string | null; to: string | null }
+  | { kind: 'wait'; minutes: number; at: string; lineName: string; mode: string; colour: string }
+  | {
+      kind: 'ride'; minutes: number; stops: number;
+      from: string; to: string;
+      lineName: string; mode: string; colour: string;
+    };
+
+export interface ProbeResult {
+  id: number;
+  /** Null when the point can't be reached at all. */
+  journey: { total: number; reachable: boolean; legs: Leg[] } | null;
+}
