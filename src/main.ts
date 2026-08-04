@@ -768,6 +768,9 @@ map.on('mousemove', (e: L.LeafletMouseEvent) => {
 
 const hideHover = () => { el.hoverCard.hidden = true; hoverAt = null; lastProbe = null; };
 map.on('mouseout dragstart zoomstart', hideHover);
+// Leaflet's own mouseout can be skipped when the pointer jumps straight from the
+// map to the panel, leaving a stale card behind; the DOM event always fires.
+map.getContainer().addEventListener('mouseleave', hideHover);
 
 /**
  * Round leg minutes so they still add up to the displayed total (largest

@@ -1,47 +1,91 @@
 # London Commute Map
 
+**[london-commute-map.vercel.app](https://london-commute-map.vercel.app/)**
+
+Where could you live, given where you have to be?
+
 Give it a London postcode, station or address — a workplace, say — and a commute
 length, and it shades every part of the city you could commute in from within
-that time by public transport. Drag the time slider and the map redraws
-immediately; drag a pin (or click the map) to move that place.
+that time by public transport. Add more places and each gets its own colour, so
+the answer to *"where works for both of us?"* is the patch where they overlap.
 
-**Add up to five places** — an office, a partner's office, a school — and each
-gets its own colour on the map, mixing where their areas overlap. Switch to
-**Overlap only** and the shading is driven by the *longest* of your commutes, so
-everywhere inside the 45-minute band is within 45 minutes of every place at once.
-The panel reports the area each place reaches and the area they all share.
+Everything runs in the browser: no server, no API keys, no backend. Dragging the
+time slider redraws the map immediately.
 
-**Hover anywhere** and you get the actual commute from that spot to every place
-you've added: totals for each, then the selected place's journey leg by leg —
-walk, wait, ride, change, walk — with each line's roundel in its own TfL colour,
-the minutes for every leg, and a door-to-door total. The legs always add up to
-the total exactly. Press **1–5** without moving the cursor to swap which place's
-route is spelled out — the numbers match the pins and the panel list.
+![Two workplaces, each in its own colour, with the commute from the hovered point to both](docs/screenshot.png)
 
-![Everywhere within a 45-minute commute of Westminster](docs/screenshot.png)
+## Using it
+
+Try it at **[london-commute-map.vercel.app](https://london-commute-map.vercel.app/)**,
+or run it locally with the steps further down.
+
+**Set a place.** Type a postcode, station or address in the search box, or just
+click the map. Drag a pin to move it. This is where you're commuting *to* — the
+shading is everywhere you could commute *from*.
+
+**Add more places** with `+ Add another place`, up to five. Each takes the next
+colour, and they mix where their areas overlap — the purple in the screenshot
+above is where blue and red both reach. The numbered badge on each pin matches
+its row in the panel.
+
+**Two ways to view several places:**
+
+| | |
+|---|---|
+| **Each place** | Every isochrone in its own colour, blended where they overlap. Good for seeing the shape of each commute. |
+| **Overlap only** | One layer, shaded by the *longest* of your commutes. Everywhere inside the 45-minute band is within 45 minutes of **every** place at once. Good for actually picking a neighbourhood. |
+
+![The same two places in overlap mode, shaded by the worse of the two commutes](docs/overlap.png)
+
+**Hover anywhere on the map** for the real commute from that spot: a total for
+every place you've added, then the selected place's journey leg by leg — walk,
+wait, ride, change, walk — with each line's roundel in its own TfL colour and the
+minutes for every leg. The legs always add up to the total exactly.
+
+**Press `1`–`5`** while hovering to swap which place's route is spelled out,
+without moving the cursor. Clicking a place in the panel (or its pin) does the
+same thing.
+
+**The rest of the panel:**
+
+- **Travel time** — 5 to 120 minutes. This is a door-to-door budget, walking at
+  both ends included.
+- **Modes** — turn off anything you won't use. Dropping National Rail is the
+  usual one; dropping everything but the Tube shows how zone-1-shaped London is.
+- **Fine tuning** — walking speed, the longest walk you'd do to your first stop
+  and at your destination, the penalty you feel per change, and service level
+  (peak / off-peak / evening, which scales every line's waiting time).
+- **Stats** — area reached per place, plus the area in range of all of them.
+- **Stations in range** — everything the selected place can reach, soonest
+  first. Click one to jump the map to it.
 
 ## Running it
 
 ```bash
 npm install
-npm run build:network   # fetches the TfL network into public/network.json (~2 min)
 npm run dev             # http://localhost:5173
 ```
 
-`public/network.json` is committed, so `npm run dev` works without the fetch
-step. Re-run `build:network` to pick up network changes (new stations, lines).
+`public/network.json` is committed, so this works straight away. To refresh the
+network (new stations, renamed lines):
+
+```bash
+npm run build:network   # fetches from the TfL API, ~2 min
+```
 
 ```bash
 npm run build     # typecheck + production bundle into dist/
 npm run preview   # serve the built output
 ```
 
-`dist/` is a static site — no server, no API keys, no backend.
+`dist/` is a static site — host it anywhere. The deploy at
+[london-commute-map.vercel.app](https://london-commute-map.vercel.app/) is that
+output on Vercel, no configuration beyond the build command.
 
 ## How it works
 
 Isochrones are computed **in the browser**, which is what makes the slider feel
-instant. There are three stages:
+instant. Four stages:
 
 **1. Build time — `scripts/build-network.mjs`.** Pulls the transport graph from
 the [TfL Unified API](https://api-portal.tfl.gov.uk/): station coordinates and
@@ -54,30 +98,46 @@ inter-station times by differencing the cumulative arrivals in
 **2. Routing — `src/engine.ts`.** Dijkstra over `(station, arriving line)`
 states, so staying on a train is free while changing lines costs a penalty plus
 the wait for the next service (half the line's headway). Seeded by walking from
-your destination to every station in range. ~2 ms for the whole network. It also
-keeps a predecessor per state, which is what lets a hovered point replay its
-commute: pick the station that reaches the point soonest, walk the chain back,
-group consecutive hops on one line into a single ride leg, then flip the whole
+the place to every station in range. ~2 ms for the whole network. It also keeps a
+predecessor per state, which is what lets a hovered point replay its commute:
+pick the station that reaches the point soonest, walk the chain back, group
+consecutive hops on one line into a single ride leg, then flip the whole
 itinerary inbound.
 
-Routing outward from the destination and presenting the result inbound is sound
-because every edge and interchange in the graph is symmetric — the times are the
-same in both directions. What isn't symmetric is the two walking limits, so they
-are bound to the ends a commuter thinks in: one for the walk to their first stop,
-one for the walk at the destination.
+Routing outward from the place and presenting the result inbound is sound because
+every edge and interchange in the graph is symmetric — the times are the same in
+both directions. What isn't symmetric is the two walking limits, so they're bound
+to the ends a commuter thinks in: one for the walk to their first stop, one for
+the walk at the far end.
 
 **3. Rasterise and contour — `src/worker.ts`.** Every reachable station stamps a
 walking disc onto a 250 m grid over London, keeping the minimum — the
-multi-source shortest walk. `turf.isobands` then contours that grid into
-banded polygons (~40 ms). Both stages run in a Web Worker, and each place's
-Dijkstra result is cached under its own id, so moving the time slider only
-re-rasterises and moving one pin leaves the other places alone.
+multi-source shortest walk. `turf.isobands` then contours that grid into banded
+polygons (~40 ms). Both stages run in a Web Worker, and each place's Dijkstra
+result is cached under its own id, so moving the time slider only re-rasterises
+and moving one pin leaves the other places alone.
 
-The overlap layer is the same machinery over a derived grid: take the *maximum*
+**4. The overlap** is the same machinery over a derived grid: take the *maximum*
 travel time across every place's grid, cell by cell, and contour that. A point
 inside its 40-minute band is 40 minutes or less from all of them, which is
-exactly the question "where could we both live?" asks. Area is measured from the
-raster rather than the polygons, because isobands nest and would double-count.
+exactly what the question asks. Area is measured from the raster rather than the
+polygons, because isobands nest and would otherwise double-count.
+
+Each place costs its own routing pass and its own contouring run, which is why
+five is the cap. On the map, places are drawn into separate Leaflet panes and
+composited with `multiply` (light theme) or `screen` (dark) — that's what makes
+overlaps read as denser colour instead of whichever layer happens to be on top.
+
+### Layout
+
+| File | |
+|---|---|
+| `src/engine.ts` | Graph, Dijkstra, journey reconstruction, rasteriser |
+| `src/worker.ts` | Per-place orchestration, contouring, the overlap grid |
+| `src/main.ts` | Map, panel, places, hover card |
+| `src/lines.ts` | TfL line colours, mode icons, contrast handling |
+| `src/geocode.ts` | Station / postcode / address search |
+| `scripts/build-network.mjs` | The one-off TfL fetch |
 
 ## Accuracy
 
