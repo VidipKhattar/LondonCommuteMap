@@ -33,12 +33,33 @@ export interface StationHit {
   mode: string;
 }
 
+/** One place the commuter travels to, as the worker needs it. */
+export interface DestInput {
+  /** Stable id, so the worker can keep each place's routing cached separately. */
+  key: number;
+  lat: number;
+  lon: number;
+}
+
+/** The isochrone for a single place. */
+export interface LayerResult {
+  key: number;
+  bands: GeoJSON.FeatureCollection;
+  stations: StationHit[];
+  areaKm2: number;
+}
+
 export interface ComputeResult {
   id: number;
-  bands: GeoJSON.FeatureCollection;
   breaks: number[];
-  stations: StationHit[];
-  stats: { areaKm2: number; stationCount: number; ms: number };
+  layers: LayerResult[];
+  /**
+   * Where every place is in range at once, banded on the *worst* commute of the
+   * set — so a point inside the 40 minute band is within 40 minutes of them all.
+   * Null while there is only one place.
+   */
+  overlap: { bands: GeoJSON.FeatureCollection; areaKm2: number } | null;
+  ms: number;
 }
 
 export interface StationRef {
@@ -85,8 +106,13 @@ export type Leg =
       lineName: string; mode: string; colour: string;
     };
 
+/** One hovered-point-to-place answer; a null journey means it can't be reached. */
+export interface ProbeJourney {
+  key: number;
+  journey: { total: number; reachable: boolean; legs: Leg[] } | null;
+}
+
 export interface ProbeResult {
   id: number;
-  /** Null when the point can't be reached at all. */
-  journey: { total: number; reachable: boolean; legs: Leg[] } | null;
+  journeys: ProbeJourney[];
 }

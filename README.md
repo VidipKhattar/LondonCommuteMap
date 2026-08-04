@@ -3,12 +3,20 @@
 Give it a London postcode, station or address — a workplace, say — and a commute
 length, and it shades every part of the city you could commute in from within
 that time by public transport. Drag the time slider and the map redraws
-immediately; drag the pin (or click the map) to move the destination.
+immediately; drag a pin (or click the map) to move that place.
 
-**Hover anywhere** and you get the actual commute from that spot into your
-address, leg by leg — walk, wait, ride, change, walk — with each line's roundel in
-its own TfL colour, the minutes for every leg, and a door-to-door total. The legs
-always add up to the total exactly.
+**Add up to five places** — an office, a partner's office, a school — and each
+gets its own colour on the map, mixing where their areas overlap. Switch to
+**Overlap only** and the shading is driven by the *longest* of your commutes, so
+everywhere inside the 45-minute band is within 45 minutes of every place at once.
+The panel reports the area each place reaches and the area they all share.
+
+**Hover anywhere** and you get the actual commute from that spot to every place
+you've added: totals for each, then the selected place's journey leg by leg —
+walk, wait, ride, change, walk — with each line's roundel in its own TfL colour,
+the minutes for every leg, and a door-to-door total. The legs always add up to
+the total exactly. Press **1–5** without moving the cursor to swap which place's
+route is spelled out — the numbers match the pins and the panel list.
 
 ![Everywhere within a 45-minute commute of Westminster](docs/screenshot.png)
 
@@ -61,8 +69,15 @@ one for the walk at the destination.
 **3. Rasterise and contour — `src/worker.ts`.** Every reachable station stamps a
 walking disc onto a 250 m grid over London, keeping the minimum — the
 multi-source shortest walk. `turf.isobands` then contours that grid into
-banded polygons (~40 ms). Both stages run in a Web Worker, and the Dijkstra
-result is cached, so moving the time slider only re-rasterises.
+banded polygons (~40 ms). Both stages run in a Web Worker, and each place's
+Dijkstra result is cached under its own id, so moving the time slider only
+re-rasterises and moving one pin leaves the other places alone.
+
+The overlap layer is the same machinery over a derived grid: take the *maximum*
+travel time across every place's grid, cell by cell, and contour that. A point
+inside its 40-minute band is 40 minutes or less from all of them, which is
+exactly the question "where could we both live?" asks. Area is measured from the
+raster rather than the polygons, because isobands nest and would double-count.
 
 ## Accuracy
 

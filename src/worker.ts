@@ -3,8 +3,8 @@ import { isobands } from '@turf/turf';
 import { Engine, GRID, metres } from './engine';
 import { lineColour, lineLabel } from './lines';
 import type {
-  ComputeResult, Leg, ProbeResult, RawNetwork, RouteOptions,
-  RouteResult, StationHit, StationRef,
+  ComputeResult, DestInput, Journey, LayerResult, Leg, ProbeJourney, ProbeResult,
+  RawNetwork, RouteOptions, RouteResult, StationHit, StationRef,
 } from './types';
 
 let engine: Engine | null = null;
@@ -13,10 +13,15 @@ let lineMeta: RawNetwork['lines'] = {};
 /** Upper bound of the time slider; routing runs to here once and is then reused. */
 const ROUTE_HORIZON = 120;
 
-/** Cache the Dijkstra pass: only the grid depends on the time slider. */
-let cache: { key: string; route: RouteResult } | null = null;
-/** Last options seen, so a hover probe uses the same walk caps as the drawing. */
+/**
+ * Cached Dijkstra pass per place, keyed on that place's id: moving one pin or
+ * adding a place leaves the others' routing untouched. Only the grid depends on
+ * the time slider.
+ */
+const routes = new Map<number, { key: string; route: RouteResult }>();
+/** Last options and places seen, so a hover probe matches what's drawn. */
 let lastOpt: RouteOptions | null = null;
+let lastDests: DestInput[] = [];
 
 /** Pick a round band interval giving roughly 3-6 bands. */
 function niceBreaks(maxTime: number): number[] {
@@ -55,38 +60,25 @@ async function init(url: string) {
   });
 }
 
-function compute(id: number, origin: { lat: number; lon: number }, opt: RouteOptions) {
-  if (!engine) return;
-  const started = performance.now();
+interface GridMeta { rows: number; cols: number; latStep: number; lonStep: number }
 
-  // Route once out to the slider's maximum, so moving the slider only re-rasterises.
-  const key = JSON.stringify([
-    origin.lat, origin.lon, opt.walkSpeed, opt.maxAccessWalk,
-    opt.transferPenalty, opt.serviceFactor, opt.modes,
-  ]);
-  const route = cache?.key === key
-    ? cache.route
-    : engine.route(origin.lat, origin.lon, { ...opt, maxTime: ROUTE_HORIZON });
-  cache = { key, route };
-  lastOpt = opt;
-  const arrival = route.arrival;
-
-  const grid = engine.timeGrid(origin.lat, origin.lon, arrival, opt);
-
+/** Turn a raster of travel times into bands ranked fastest to slowest. */
+function toBands(
+  values: Float32Array, meta: GridMeta, breaks: number[], maxTime: number,
+): GeoJSON.FeatureCollection {
   // turf.isobands consumes a regular lattice of points carrying a z value.
   const features: GeoJSON.Feature[] = [];
-  for (let r = 0; r < grid.rows; r++) {
-    const lat = GRID.minLat + r * grid.latStep;
-    for (let c = 0; c < grid.cols; c++) {
+  for (let r = 0; r < meta.rows; r++) {
+    const lat = GRID.minLat + r * meta.latStep;
+    for (let c = 0; c < meta.cols; c++) {
       features.push({
         type: 'Feature',
-        properties: { z: grid.values[r * grid.cols + c] },
-        geometry: { type: 'Point', coordinates: [GRID.minLon + c * grid.lonStep, lat] },
+        properties: { z: values[r * meta.cols + c] },
+        geometry: { type: 'Point', coordinates: [GRID.minLon + c * meta.lonStep, lat] },
       });
     }
   }
 
-  const breaks = niceBreaks(opt.maxTime);
   let bands: GeoJSON.FeatureCollection;
   try {
     bands = isobands(
@@ -95,7 +87,7 @@ function compute(id: number, origin: { lat: number; lon: number }, opt: RouteOpt
       { zProperty: 'z' } as never,
     ) as unknown as GeoJSON.FeatureCollection;
   } catch {
-    bands = { type: 'FeatureCollection', features: [] };
+    return { type: 'FeatureCollection', features: [] };
   }
 
   // Tag each band with its rank so the map colours by magnitude, not label text.
@@ -104,24 +96,38 @@ function compute(id: number, origin: { lat: number; lon: number }, opt: RouteOpt
     f.properties = {
       ...f.properties,
       band: i, bandCount,
-      from: breaks[i], to: breaks[i + 1] ?? opt.maxTime,
+      from: breaks[i], to: breaks[i + 1] ?? maxTime,
     };
   });
   // Draw the smallest, darkest band last so it sits on top of the wider ones.
   bands.features.reverse();
+  return bands;
+}
 
+/**
+ * Measure area from the raster, not the bands: isobands can nest polygons,
+ * which would double-count the overlap.
+ */
+function areaOf(values: Float32Array, maxTime: number): number {
+  const cellKm2 = (GRID.cellMetres / 1000) ** 2;
+  let reached = 0;
+  for (let i = 0; i < values.length; i++) if (values[i] <= maxTime) reached++;
+  return Math.round(reached * cellKm2);
+}
+
+function stationHits(arrival: Float32Array, maxTime: number): StationHit[] {
   // One interchange can be several TfL records (Wimbledon is tube + rail + tram).
   // Routing needs them separate; the list and the map dots do not.
   const byName = new Map<string, StationHit>();
   for (let s = 0; s < arrival.length; s++) {
-    if (arrival[s] >= opt.maxTime) continue;
-    const name = engine.names[s];
+    if (arrival[s] >= maxTime) continue;
+    const name = engine!.names[s];
     const hit: StationHit = {
       name,
-      lat: engine.lat[s],
-      lon: engine.lon[s],
+      lat: engine!.lat[s],
+      lon: engine!.lon[s],
       t: Math.round(arrival[s] * 10) / 10,
-      mode: engine.stationModes[s][0] ?? 'tube',
+      mode: engine!.stationModes[s][0] ?? 'tube',
     };
     const prev = byName.get(name);
     // Only merge if they really are the same place, not a coincidence of naming.
@@ -131,54 +137,106 @@ function compute(id: number, origin: { lat: number; lon: number }, opt: RouteOpt
       byName.set(name, hit);
     }
   }
-  const stations = [...byName.values()].sort((a, b) => a.t - b.t);
+  return [...byName.values()].sort((a, b) => a.t - b.t);
+}
 
-  // Measure area from the raster, not the bands: isobands can nest polygons,
-  // which would double-count the overlap.
-  const cellKm2 = (GRID.cellMetres / 1000) ** 2;
-  let reachedCells = 0;
-  for (let i = 0; i < grid.values.length; i++) if (grid.values[i] <= opt.maxTime) reachedCells++;
-  const areaKm2 = reachedCells * cellKm2;
+/** Everything about a place's routing that isn't the time slider. */
+function routeKey(d: DestInput, opt: RouteOptions) {
+  return JSON.stringify([
+    d.lat, d.lon, opt.walkSpeed, opt.maxAccessWalk,
+    opt.transferPenalty, opt.serviceFactor, opt.modes,
+  ]);
+}
+
+function compute(id: number, dests: DestInput[], opt: RouteOptions) {
+  if (!engine || !dests.length) return;
+  const started = performance.now();
+
+  // Forget places that have since been removed, so their routing isn't kept alive.
+  const live = new Set(dests.map((d) => d.key));
+  for (const key of [...routes.keys()]) if (!live.has(key)) routes.delete(key);
+
+  const breaks = niceBreaks(opt.maxTime);
+  const layers: LayerResult[] = [];
+  let meta: GridMeta | null = null;
+  // Worst commute of the set, per cell — what the overlap band is measured on.
+  let worst: Float32Array | null = null;
+
+  for (const d of dests) {
+    const key = routeKey(d, opt);
+    const hit = routes.get(d.key);
+    const route = hit?.key === key
+      ? hit.route
+      : engine.route(d.lat, d.lon, { ...opt, maxTime: ROUTE_HORIZON });
+    routes.set(d.key, { key, route });
+
+    const grid = engine.timeGrid(d.lat, d.lon, route.arrival, opt);
+    meta = grid;
+
+    layers.push({
+      key: d.key,
+      bands: toBands(grid.values, grid, breaks, opt.maxTime),
+      stations: stationHits(route.arrival, opt.maxTime),
+      areaKm2: areaOf(grid.values, opt.maxTime),
+    });
+
+    if (dests.length > 1) {
+      if (!worst) worst = Float32Array.from(grid.values);
+      else for (let i = 0; i < worst.length; i++) worst[i] = Math.max(worst[i], grid.values[i]);
+    }
+  }
+
+  const overlap = worst && meta
+    ? { bands: toBands(worst, meta, breaks, opt.maxTime), areaKm2: areaOf(worst, opt.maxTime) }
+    : null;
+
+  lastOpt = opt;
+  lastDests = dests;
 
   const result: ComputeResult = {
-    id,
-    bands,
-    breaks,
-    stations,
-    stats: {
-      areaKm2: Math.round(areaKm2),
-      stationCount: stations.length,
-      ms: Math.round(performance.now() - started),
-    },
+    id, breaks, layers, overlap, ms: Math.round(performance.now() - started),
   };
   postMessage({ type: 'result', ...result });
 }
 
-/** Resolve a hovered point into a renderable itinerary. Runs on every mouse move. */
-function probe(id: number, lat: number, lon: number) {
-  if (!engine || !cache || !lastOpt) return;
-  const raw = engine.probe(lat, lon, cache.route, lastOpt);
+/** Resolve line slots into the names, modes and colours the card renders. */
+function renderable(raw: Journey | null): ProbeJourney['journey'] {
+  if (!raw) return null;
+  const legs: Leg[] = raw.legs.map((l) => {
+    if (l.kind === 'walk') return l;
+    const id = engine!.lineIds[l.line];
+    const meta = lineMeta[id];
+    const mode = meta?.mode ?? 'tube';
+    const shared = {
+      lineName: lineLabel(meta?.name ?? id, mode),
+      mode,
+      colour: lineColour(id, mode),
+    };
+    return l.kind === 'wait'
+      ? { kind: 'wait', minutes: l.minutes, at: l.at, ...shared }
+      : { kind: 'ride', minutes: l.minutes, stops: l.stops, from: l.from, to: l.to, ...shared };
+  });
+  return { total: raw.total, reachable: raw.reachable, legs };
+}
 
-  let journey: ProbeResult['journey'] = null;
-  if (raw) {
-    const legs: Leg[] = raw.legs.map((l) => {
-      if (l.kind === 'walk') return l;
-      const id = engine!.lineIds[l.line];
-      const meta = lineMeta[id];
-      const mode = meta?.mode ?? 'tube';
-      const shared = {
-        lineName: lineLabel(meta?.name ?? id, mode),
-        mode,
-        colour: lineColour(id, mode),
-      };
-      return l.kind === 'wait'
-        ? { kind: 'wait', minutes: l.minutes, at: l.at, ...shared }
-        : { kind: 'ride', minutes: l.minutes, stops: l.stops, from: l.from, to: l.to, ...shared };
+/**
+ * Resolve a hovered point into one itinerary per place. Runs on every mouse
+ * move, so it reuses the routing already cached for the drawing.
+ */
+function probe(id: number, lat: number, lon: number) {
+  if (!engine || !lastOpt) return;
+
+  const journeys: ProbeJourney[] = [];
+  for (const d of lastDests) {
+    const cached = routes.get(d.key);
+    if (!cached) continue;
+    journeys.push({
+      key: d.key,
+      journey: renderable(engine.probe(lat, lon, cached.route, lastOpt)),
     });
-    journey = { total: raw.total, reachable: raw.reachable, legs };
   }
 
-  const result: ProbeResult = { id, journey };
+  const result: ProbeResult = { id, journeys };
   postMessage({ type: 'probe', ...result });
 }
 
@@ -188,7 +246,7 @@ onmessage = (ev: MessageEvent) => {
     if (msg.type === 'init') {
       init(msg.url).catch((e) => postMessage({ type: 'error', message: String(e.message ?? e) }));
     }
-    else if (msg.type === 'compute') compute(msg.id, msg.origin, msg.opt);
+    else if (msg.type === 'compute') compute(msg.id, msg.dests, msg.opt);
     else if (msg.type === 'probe') probe(msg.id, msg.lat, msg.lon);
   } catch (e) {
     postMessage({ type: 'error', message: String((e as Error).message ?? e) });

@@ -16,16 +16,33 @@
       </header>
 
       <section class="field">
-        <label for="search">Commute to</label>
+        <label for="search">Places you commute to</label>
         <div class="search-wrap">
           <input id="search" type="text" autocomplete="off" spellcheck="false"
                  placeholder="Postcode, station or address" />
           <button id="clear" type="button" aria-label="Clear" hidden>&times;</button>
           <ul id="suggestions" role="listbox" hidden></ul>
         </div>
+        <ul id="places" class="places"></ul>
+        <button id="add-place" class="add-place" type="button">+ Add another place</button>
         <p class="hint" id="origin-note">Try <button class="link" data-example="SW1A 1AA">SW1A 1AA</button>,
           <button class="link" data-example="King's Cross St. Pancras">King's Cross</button> —
           or click the map.</p>
+      </section>
+
+      <section class="field" id="view-field" hidden>
+        <label>Show</label>
+        <div id="view" class="chips">
+          <label class="chip">
+            <input type="radio" name="view" value="each" checked />
+            <span class="dot"></span>Each place
+          </label>
+          <label class="chip">
+            <input type="radio" name="view" value="overlap" />
+            <span class="dot"></span>Overlap only
+          </label>
+        </div>
+        <p class="hint" id="view-note"></p>
       </section>
 
       <section class="field">
@@ -75,7 +92,8 @@
       <section id="stats" class="stats"></section>
 
       <section class="field">
-        <label for="station-list">Stations in range <span id="station-count" class="muted"></span></label>
+        <label for="station-list">Stations in range<span id="station-for" class="muted"></span>
+          <span id="station-count" class="muted"></span></label>
         <ol id="station-list" class="station-list"></ol>
       </section>
 

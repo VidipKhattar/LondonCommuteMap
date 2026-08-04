@@ -180,6 +180,86 @@ output {
 .sg-label { font-size: 14px; font-weight: 500; }
 .sg-detail { font-size: 11.5px; color: var(--text-muted); margin-left: auto; text-align: right; }
 
+/* ------------------------------------------------------------- places */
+
+.places {
+  margin: 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 4px;
+}
+
+/* The selected place is the one the search box edits and the hover card
+   details, so it needs to read as selected without shouting. */
+.place {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px 7px 10px;
+  font-size: 13.5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.place:hover { background: var(--surface-3); }
+.place.is-active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-1));
+}
+
+.pl-dot {
+  flex: 0 0 auto;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.18);
+}
+
+.pl-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* The number key that selects this place — same badge on its map pin. */
+.pl-key {
+  flex: 0 0 auto;
+  min-width: 17px; height: 17px;
+  display: grid; place-items: center;
+  padding: 0 4px;
+  font: inherit; font-size: 10.5px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.place.is-active .pl-key { color: var(--text-primary); }
+
+.pl-remove {
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  flex: 0 0 auto;
+  background: none; border: 0; border-radius: 50%;
+  color: var(--text-muted);
+  font-size: 16px; line-height: 1; cursor: pointer;
+}
+.pl-remove:hover { background: var(--surface-3); color: var(--text-primary); }
+
+.add-place {
+  align-self: flex-start;
+  padding: 6px 11px;
+  font: inherit; font-size: 12.5px; font-weight: 550;
+  color: var(--accent);
+  background: none;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 999px;
+  cursor: pointer;
+}
+.add-place:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 10%, var(--surface-1)); }
+.add-place:disabled { color: var(--text-muted); border-style: solid; cursor: default; }
+.add-place.is-adding {
+  color: var(--text-primary);
+  border-style: solid;
+  background: var(--surface-3);
+}
+
 /* ------------------------------------------------------------- inputs */
 
 input[type='range'] {
@@ -272,6 +352,19 @@ input[type='range']:focus-visible { outline: 2px solid var(--accent); outline-of
 .legend { display: flex; flex-direction: column; gap: 4px; }
 .legend-bar { display: flex; height: 12px; border-radius: 3px; overflow: hidden; gap: 2px; }
 .legend-bar span { flex: 1; }
+
+/* One ramp per place: the name takes a fixed column so the bars stay aligned
+   and the break labels underneath line up with all of them at once. */
+.legend-row { display: flex; align-items: center; gap: 8px; }
+.legend-row + .legend-row { margin-top: 3px; }
+.legend-row .legend-bar { flex: 1; }
+.lg-name {
+  flex: 0 0 86px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.legend-row + .legend-labels { margin-left: 94px; }
 .legend-labels {
   display: flex; justify-content: space-between;
   font-size: 10.5px; color: var(--text-muted);
@@ -297,7 +390,14 @@ input[type='range']:focus-visible { outline: 2px solid var(--accent); outline-of
   font-size: 10.5px; text-transform: uppercase;
   letter-spacing: 0.05em; color: var(--text-muted);
   margin-top: 1px;
+  display: flex; align-items: center; gap: 5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.stat .k .pl-dot { width: 7px; height: 7px; }
+.stat.is-active { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+
+/* The headline number once there are several places, so give it the full row. */
+.stat-overlap { grid-column: 1 / -1; }
 
 .station-list {
   margin: 0; padding: 0; list-style: none;
@@ -402,6 +502,54 @@ input[type='range']:focus-visible { outline: 2px solid var(--accent); outline-of
 .hover-total.over .ht-v { color: var(--text-muted); }
 .hover-total.over .ht-k { color: #e34948; }
 
+/* Several places: the totals lead, one row each, and the itinerary below is
+   for whichever place is selected in the panel. */
+.hover-places {
+  display: flex; flex-direction: column; gap: 1px;
+  padding-bottom: 8px;
+  margin-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+}
+
+.hp-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.hp-row.is-active { background: var(--surface-3); }
+
+.hp-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.hp-row .pl-key { background: var(--surface-2); }
+.hp-row.is-active .pl-key { color: var(--text-primary); }
+
+.hp-time {
+  min-width: 46px;
+  text-align: right;
+  font-size: 16px; font-weight: 650;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.hp-row.over .hp-time, .hp-row.over .hp-label { color: var(--text-muted); }
+
+.hover-head {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.hover-head > span:first-child {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hh-hint { margin-left: auto; flex: 0 0 auto; text-transform: none; opacity: 0.75; }
+
 .legs { display: flex; flex-direction: column; gap: 2px; }
 
 .leg { display: flex; align-items: center; gap: 9px; padding: 3px 0; }
@@ -473,13 +621,26 @@ input[type='range']:focus-visible { outline: 2px solid var(--accent); outline-of
   line-height: 1.35;
 }
 
-.origin-pin {
+.place-pin {
   width: 20px; height: 20px;
+  display: grid; place-items: center;
   border-radius: 50%;
-  background: var(--seq-1);
-  border: 3px solid #fff;
+  background: var(--pin);
+  border: 2.5px solid #fff;
   box-shadow: 0 0 0 1.5px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.4);
+  color: #fff;
+  font-size: 11px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.45);
   cursor: grab;
+}
+
+/* The selected place's pin, ringed so it's obvious which one the panel edits. */
+.place-pin.is-active {
+  width: 24px; height: 24px;
+  margin: -2px;
+  font-size: 12px;
+  box-shadow: 0 0 0 2px var(--pin), 0 2px 10px rgb(0 0 0 / 0.45);
 }
 
 .station-dot {
